@@ -1,5 +1,6 @@
 import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
+import { MonitoringHooksService } from '../services/monitoring-hooks.service';
 import { PerformanceMetricService } from '../services/performance-metric.service';
 
 export interface ApiRequest extends Request {
@@ -11,7 +12,10 @@ export interface ApiRequest extends Request {
 export class PerformanceLoggingMiddleware implements NestMiddleware {
   private readonly logger = new Logger(PerformanceLoggingMiddleware.name);
 
-  constructor(private readonly performanceMetricService: PerformanceMetricService) {}
+  constructor(
+    private readonly performanceMetricService: PerformanceMetricService,
+    private readonly monitoringHooksService: MonitoringHooksService,
+  ) {}
 
   async use(req: ApiRequest, res: Response, next: NextFunction) {
     const requestId = req.headers['x-request-id'] as string || this.generateRequestId();
@@ -20,13 +24,28 @@ export class PerformanceLoggingMiddleware implements NestMiddleware {
     req.requestId = requestId;
     req.startTime = startTime;
 
-    // Capture response finish event
-    const originalSend = res.send;
-    res.send = (data: any) => {
+    this.monitoringHooksService.adjustGauge('http_requests_in_flight', 1, {
+      method: req.method,
+    });
+
+    res.on('finish', () => {
       const duration = Date.now() - startTime;
       const statusCode = res.statusCode;
-      
-      // Log performance metric asynchronously
+
+      this.monitoringHooksService.incrementCounter('http_requests_total', 1, {
+        method: req.method,
+        endpoint: this.categorizeEndpoint(req.path),
+        statusCode,
+      });
+      this.monitoringHooksService.adjustGauge('http_requests_in_flight', -1, {
+        method: req.method,
+      });
+      this.monitoringHooksService.observeHistogram('http_request_duration_ms', duration, {
+        method: req.method,
+        endpoint: this.categorizeEndpoint(req.path),
+        statusCode,
+      });
+
       this.logPerformance({
         method: req.method,
         path: req.path,
@@ -38,9 +57,7 @@ export class PerformanceLoggingMiddleware implements NestMiddleware {
       }).catch(err => {
         this.logger.error(`Failed to log performance metric: ${err.message}`);
       });
-
-      return originalSend.call(res, data);
-    };
+    });
 
     next();
   }
