@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { CodebaseSubmissionRequest, ValidationError } from '../schemas/analysis.schema';
+import { BaseValidator } from './base.validator';
 
-export class AnalysisValidator {
+export class AnalysisValidator extends BaseValidator {
   private static readonly SUPPORTED_LANGUAGES = ['rust', 'typescript', 'javascript', 'solidity', 'soroban'];
   private static readonly SUPPORTED_FRAMEWORKS = ['soroban', 'solidity', 'general'];
   private static readonly MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -231,15 +232,6 @@ export class AnalysisValidator {
         message: 'No Soroban contract implementation found. Files should contain #[contractimpl] or contract definitions.',
         constraint: 'sorobanRequiresContract'
       });
-    }
-  }
-
-  private static isValidUrl(url: string): boolean {
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
     }
   }
 }

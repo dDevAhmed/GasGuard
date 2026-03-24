@@ -9,6 +9,7 @@ import {
   HttpStatus,
   Logger,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { 
@@ -19,6 +20,7 @@ import {
 } from '../schemas/failed-transaction.schema';
 import { TransactionAnalysisService } from '../services/transaction-analysis.service';
 import { Public, Roles, Role, JwtAuthGuard, RolesGuard } from '../auth';
+import { BaseValidator } from '../validation/base.validator';
 
 @ApiTags('failed-transactions')
 @ApiBearerAuth()
@@ -47,13 +49,43 @@ export class FailedTransactionController {
     try {
       this.logger.log(`Analyzing failed transactions for wallet: ${request.wallet}`);
       
-      if (!request.wallet || !request.wallet.match(/^0x[a-fA-F0-9]{40}$/)) {
-        throw new HttpException('Invalid wallet address', HttpStatus.BAD_REQUEST);
+      // Validate wallet address
+      if (!request.wallet || !BaseValidator.isValidAddress(request.wallet)) {
+        throw new BadRequestException('Invalid wallet address format');
+      }
+
+      // Validate chain IDs if provided
+      if (request.chainIds) {
+        for (const chainId of request.chainIds) {
+          if (!BaseValidator.isValidChainId(chainId)) {
+            throw new BadRequestException(`Invalid chain ID: ${chainId}`);
+          }
+        }
+      }
+
+      // Validate timeframe if provided
+      if (request.timeframe) {
+        if (request.timeframe.start && !BaseValidator.isValidTimestamp(request.timeframe.start)) {
+          throw new BadRequestException('Invalid start timestamp format');
+        }
+        if (request.timeframe.end && !BaseValidator.isValidTimestamp(request.timeframe.end)) {
+          throw new BadRequestException('Invalid end timestamp format');
+        }
+        if (request.timeframe.start && request.timeframe.end) {
+          const startDate = new Date(request.timeframe.start);
+          const endDate = new Date(request.timeframe.end);
+          if (startDate >= endDate) {
+            throw new BadRequestException('Start timestamp must be before end timestamp');
+          }
+        }
       }
 
       return await this.transactionAnalysisService.analyzeWalletFailures(request);
     } catch (error) {
       this.logger.error(`Error analyzing wallet failures: ${error.message}`);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new HttpException(
         `Failed to analyze wallet failures: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -85,19 +117,35 @@ export class FailedTransactionController {
     @Query('chainIds') chainIds?: string
   ): Promise<any> {
     try {
-      if (!wallet.match(/^0x[a-fA-F0-9]{40}$/)) {
-        throw new HttpException('Invalid wallet address', HttpStatus.BAD_REQUEST);
+      // Validate wallet address
+      if (!BaseValidator.isValidAddress(wallet)) {
+        throw new BadRequestException('Invalid wallet address format');
       }
 
-      const chainIdArray = chainIds 
-        ? chainIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id))
-        : undefined;
+      // Validate chain IDs if provided
+      let chainIdArray: number[] | undefined;
+      if (chainIds) {
+        chainIdArray = chainIds.split(',').map(id => {
+          const parsed = parseInt(id.trim(), 10);
+          if (isNaN(parsed) || !BaseValidator.isValidChainId(parsed)) {
+            throw new BadRequestException(`Invalid chain ID: ${id.trim()}`);
+          }
+          return parsed;
+        });
+      }
 
       return await this.transactionAnalysisService.getWalletSummary(wallet, chainIdArray);
     } catch (error) {
       this.logger.error(`Error getting wallet summary: ${error.message}`);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new HttpException(
         `Failed to get wallet summary: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }

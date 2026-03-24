@@ -19,6 +19,7 @@ import {
   SupportedChain 
 } from '../schemas/cross-chain-gas.schema';
 import { Public, Roles, Role, JwtAuthGuard, RolesGuard } from '../auth';
+import { BaseValidator } from '../validation/base.validator';
 
 @ApiTags('Cross-Chain Gas Comparison')
 @ApiBearerAuth()
@@ -48,7 +49,8 @@ export class CrossChainGasController {
   async getCrossChainGasComparison(
     @Query('txType') txType: string
   ): Promise<CrossChainGasResponse> {
-    if (!['transfer', 'contract-call', 'swap'].includes(txType)) {
+    // Validate transaction type
+    if (!txType || !BaseValidator.isValidTransactionType(txType)) {
       throw new BadRequestException('Invalid transaction type. Must be one of: transfer, contract-call, swap');
     }
 
@@ -119,8 +121,14 @@ export class CrossChainGasController {
     @Query('chainId') chainId: number,
     @Query('hours') hours?: number
   ): Promise<any[]> {
-    if (!chainId || isNaN(chainId)) {
-      throw new BadRequestException('Valid chain ID is required');
+    // Validate chain ID
+    if (!chainId || isNaN(chainId) || !BaseValidator.isValidChainId(chainId)) {
+      throw new BadRequestException(`Invalid chain ID: ${chainId}. Supported chains: ${BaseValidator.SUPPORTED_CHAINS.join(', ')}`);
+    }
+
+    // Validate hours if provided
+    if (hours !== undefined && (isNaN(hours) || hours <= 0 || hours > 168)) { // Max 1 week
+      throw new BadRequestException('Hours must be a positive number not exceeding 168 (1 week)');
     }
 
     return this.crossChainGasService.getChainGasMetricsHistory(chainId, hours);
