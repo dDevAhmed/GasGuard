@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use colored::Colorize;
-use gasguard_engine::{ContractScanner, ScanAnalyzer};
+use gasguard_engine::{ContractScanner, ScanAnalyzer, TieredScanner, UserUsage, UsageTier};
 use std::path::PathBuf;
+use serde_json;
 
 #[derive(Parser)]
 #[command(name = "gasguard")]
@@ -17,7 +17,7 @@ struct Cli {
 enum Commands {
     /// Scan a single Rust file for optimization opportunities
     Scan {
-        /// Path to the Rust file to scan
+        /// Path to Rust file to scan
         file: PathBuf,
         /// Output format (console, json)
         #[arg(short, long, default_value = "console")]
@@ -25,7 +25,7 @@ enum Commands {
     },
     /// Scan all Rust files in a directory
     ScanDir {
-        /// Path to the directory to scan
+        /// Path to directory to scan
         directory: PathBuf,
         /// Output format (console, json)
         #[arg(short, long, default_value = "console")]
@@ -33,8 +33,31 @@ enum Commands {
     },
     /// Analyze storage optimization potential
     Analyze {
-        /// Path to the Rust file or directory to analyze
+        /// Path to Rust file or directory to analyze
         path: PathBuf,
+    },
+    /// Scan with tiered pricing
+    TieredScan {
+        /// Path to Rust file to scan
+        file: PathBuf,
+        /// User tier (starter, developer, professional, enterprise)
+        #[arg(long, default_value = "developer")]
+        tier: String,
+        /// Current month usage
+        #[arg(long, default_value = "500")]
+        usage: i64,
+        /// Output format (console, json)
+        #[arg(short, long, default_value = "console")]
+        format: String,
+    },
+    /// Show tier information and comparison
+    Tiers {
+        /// Show specific tier details
+        #[arg(long)]
+        tier: Option<String>,
+        /// Show tier comparison
+        #[arg(long)]
+        comparison: bool,
     },
 }
 
@@ -103,46 +126,145 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Analyze { path } => {
-            println!("📊 Analyzing storage optimization potential: {:?}", path);
-
-            let results = if path.is_file() {
-                vec![scanner.scan_file(&path)?]
-            } else {
-                scanner.scan_directory(&path)?
+        Commands::TieredScan { file, tier, usage, format } => {
+            println!("🔍 Scanning file with tiered pricing: {:?}", file);
+            
+            // Parse tier
+            let usage_tier = match tier.as_str() {
+                "starter" => UsageTier::Starter,
+                "developer" => UsageTier::Developer,
+                "professional" => UsageTier::Professional,
+                "enterprise" => UsageTier::Enterprise,
+                _ => {
+                    eprintln!("❌ Invalid tier. Must be: starter, developer, professional, enterprise");
+                    return Ok(());
+                }
             };
-
-            if results.is_empty() {
-                println!("✅ No optimization opportunities found!");
+            
+            // Create user usage object
+            let user_usage = UserUsage {
+                user_id: "cli-user".to_string(),
+                current_tier: usage_tier.clone(),
+                current_month_requests: usage,
+                monthly_usage: vec![],
+                average_requests_per_month: usage as f64,
+                peak_requests_per_month: usage,
+            };
+            
+            // Initialize tiered scanner
+            let tiered_scanner = TieredScanner::new();
+            
+            // Validate tier access
+            let validation = tiered_scanner.validate_tier_access(&user_usage);
+            if !validation.can_proceed {
+                eprintln!("❌ {}", validation.message);
                 return Ok(());
             }
-
-            let all_violations: Vec<_> =
-                results.iter().flat_map(|r| r.violations.clone()).collect();
-            let savings = ScanAnalyzer::calculate_storage_savings(&all_violations);
-
-            println!("\n🎯 Storage Analysis Report");
-            println!("========================");
-            println!("Files analyzed: {}", results.len());
-            println!("Total violations: {}", all_violations.len());
-            println!("\n{}", savings);
-
-            // Group violations by type
-            let mut unused_vars = 0;
-            for violation in &all_violations {
-                if violation.rule_name == "unused-state-variables" {
-                    unused_vars += 1;
+            
+            // Read file content
+            let content = std::fs::read_to_string(&file)?;
+            
+            // Perform tiered scan
+            let result = tiered_scanner.scan_with_tier(&content, file.to_string_lossy().to_string(), &user_usage)?;
+            
+            match format.as_str() {
+                "json" => {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                _ => {
+                    println!("\n🎯 Tiered Scan Results");
+                    println!("======================");
+                    println!("File: {}", result.base_result.source);
+                    println!("Applied Tier: {:?}", result.applied_tier);
+                    println!("Tier Discount: {:.1}%", result.tier_discount);
+                    println!("Final Price: {:.8} XLM", result.final_price_per_request);
+                    println!("Usage: {}/{} ({:.1}%)", result.current_usage, 
+                        if result.remaining_requests == i64::MAX { "∞".to_string() } else { result.remaining_requests.to_string() },
+                        result.usage_percentage);
+                    
+                    if !result.base_result.violations.is_empty() {
+                        println!("\n{}", ScanAnalyzer::format_violations(&result.base_result.violations));
+                        let savings = ScanAnalyzer::calculate_storage_savings(&result.base_result.violations);
+                        println!("\n{}", savings);
+                    }
+                    
+                    if let Some(recommended) = result.recommended_tier {
+                        println!("\n💡 Recommendation: Consider upgrading to {:?} tier", recommended);
+                    }
+                    
+                    if let Some(savings) = result.upgrade_savings {
+                        println!("💰 Potential savings: {:.8} XLM per scan", savings);
+                    }
+                    
+                    if let Some(warning) = result.downgrade_warning {
+                        println!("\n⚠️  {}", warning);
+                    }
                 }
             }
-
-            if unused_vars > 0 {
-                println!("\n🔧 Recommendations:");
-                println!(
-                    "  • Remove {} unused state variables to reduce storage costs",
-                    unused_vars
-                );
-                println!("  • Consider using more efficient data types where possible");
-                println!("  • Implement lazy loading patterns for rarely accessed data");
+        }
+        Commands::Tiers { tier, comparison } => {
+            let tiered_scanner = TieredScanner::new();
+            
+            if let Some(tier_name) = tier {
+                let usage_tier = match tier_name.as_str() {
+                    "starter" => UsageTier::Starter,
+                    "developer" => UsageTier::Developer,
+                    "professional" => UsageTier::Professional,
+                    "enterprise" => UsageTier::Enterprise,
+                    _ => {
+                        eprintln!("❌ Invalid tier. Must be: starter, developer, professional, enterprise");
+                        return Ok(());
+                    }
+                };
+                
+                if let Some(tier_config) = tiered_scanner.get_tier_config(&usage_tier) {
+                    println!("\n📋 {} Tier Details", tier_config.name);
+                    println!("========================");
+                    println!("Description: {}", tier_config.description);
+                    println!("Request Limit: {}", 
+                        if tier_config.request_limit == -1 { "Unlimited".to_string() } else { tier_config.request_limit.to_string() });
+                    println!("Price per Request: {:.8} XLM", tier_config.base_price_per_request);
+                    println!("Discount: {:.1}%", tier_config.discount_percentage);
+                    println!("Rate Limit: {} requests/minute", tier_config.rate_limit_per_minute);
+                    println!("Priority Support: {}", if tier_config.priority_support { "Yes" } else { "No" });
+                    println!("Custom Pricing: {}", if tier_config.custom_pricing { "Yes" } else { "No" });
+                    println!("\nFeatures:");
+                    for feature in &tier_config.features {
+                        println!("  • {}", feature);
+                    }
+                }
+            } else if comparison {
+                let tiers = tiered_scanner.get_all_tiers();
+                
+                println!("\n📊 Tier Comparison");
+                println!("==================");
+                println!("{:<15} {:<12} {:<15} {:<10} {:<8}", "Tier", "Limit", "Price/Request", "Discount", "Features");
+                println!("{}", "-".repeat(70));
+                
+                for tier_config in tiers {
+                    let limit_str = if tier_config.request_limit == -1 { 
+                        "Unlimited".to_string() 
+                    } else { 
+                        tier_config.request_limit.to_string() 
+                    };
+                    
+                    println!("{:<15} {:<12} {:<15} {:<10} {:<8}", 
+                        tier_config.name,
+                        limit_str,
+                        format!("{:.8} XLM", tier_config.base_price_per_request),
+                        format!("{:.1}%", tier_config.discount_percentage),
+                        tier_config.features.len().to_string()
+                    );
+                }
+                
+                println!("\n💡 Use 'gasguard tiered-scan --tier <tier>' to scan with a specific tier");
+            } else {
+                println!("📋 Available Tiers:");
+                println!("  • starter     - Up to 1,000 requests/month");
+                println!("  • developer   - Up to 10,000 requests/month");
+                println!("  • professional - Up to 100,000 requests/month");
+                println!("  • enterprise  - Unlimited requests");
+                println!("\n💡 Use '--comparison' to see detailed comparison or '--tier <name>' for tier details");
             }
         }
     }

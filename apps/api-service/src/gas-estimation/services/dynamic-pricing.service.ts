@@ -1,10 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from "@nestjs/common";
 import {
   DynamicGasEstimate,
   PricingStrategy,
   GasPriceSnapshot,
-} from '../interfaces/gas-price.interface';
-import { NetworkMonitorService } from './network-monitor.service';
+} from "../interfaces/gas-price.interface";
+import { NetworkMonitorService } from "./network-monitor.service";
+import { TieredPricingService } from "./tiered-pricing.service";
+import {
+  UserUsage,
+  TieredPriceEstimate,
+} from "../interfaces/tiered-pricing.interface";
 
 /**
  * DynamicPricingService
@@ -17,7 +22,7 @@ export class DynamicPricingService {
 
   // Default pricing strategy for Soroban
   private readonly defaultStrategy: PricingStrategy = {
-    name: 'soroban-adaptive',
+    name: "soroban-adaptive",
     baseMultiplier: 1.0,
     congestionThresholds: {
       low: 30,
@@ -33,15 +38,19 @@ export class DynamicPricingService {
     safetyMargin: 1.15, // 15% safety margin
   };
 
-  constructor(private networkMonitor: NetworkMonitorService) {}
+  constructor(
+    private networkMonitor: NetworkMonitorService,
+    private tieredPricingService: TieredPricingService,
+  ) {}
 
   /**
-   * Get dynamic gas estimate for a transaction
+   * Get dynamic gas estimate for a transaction with tiered pricing
    */
   async estimateGasPrice(
     chainId: string,
     gasUnits: number,
-    priority: 'low' | 'normal' | 'high' | 'critical' = 'normal',
+    priority: "low" | "normal" | "high" | "critical" = "normal",
+    userUsage?: UserUsage,
   ): Promise<DynamicGasEstimate> {
     try {
       // Get current network snapshot
@@ -52,11 +61,44 @@ export class DynamicPricingService {
       const finalGasPrice = snapshot.recommendedFeeRate * priorityMultiplier;
 
       // Apply safety margin
-      const safetyAdjustedPrice = finalGasPrice * this.defaultStrategy.safetyMargin;
+      const safetyAdjustedPrice =
+        finalGasPrice * this.defaultStrategy.safetyMargin;
 
       // Calculate total cost
-      const totalEstimatedCostStroops = gasUnits * safetyAdjustedPrice;
-      const totalEstimatedCostXLM = totalEstimatedCostStroops / 1e7; // 1 XLM = 10^7 stroops
+      let totalEstimatedCostStroops = gasUnits * safetyAdjustedPrice;
+      let totalEstimatedCostXLM = totalEstimatedCostStroops / 1e7; // 1 XLM = 10^7 stroops
+
+      // Apply tiered pricing if user usage is provided
+      if (userUsage) {
+        const tieredEstimate =
+          await this.tieredPricingService.calculateTieredPrice(
+            {
+              chainId,
+              estimatedGasUnits: gasUnits,
+              baseGasPrice: snapshot.baseFeePerInstruction,
+              surgeMultiplier: snapshot.surgePriceMultiplier,
+              dynamicGasPrice: safetyAdjustedPrice,
+              totalEstimatedCostStroops,
+              totalEstimatedCostXLM,
+              priceValidityDurationMs: this.calculatePriceValidityWindow(
+                snapshot.volatilityIndex,
+              ),
+              expiresAt: new Date(
+                Date.now() +
+                  this.calculatePriceValidityWindow(snapshot.volatilityIndex),
+              ),
+              recommendedPriority: priority,
+              alternativePrices: this.generateAlternativePrices(
+                snapshot,
+                gasUnits,
+              ),
+            },
+            userUsage,
+          );
+
+        totalEstimatedCostStroops = tieredEstimate.totalCostWithTier * 1e7;
+        totalEstimatedCostXLM = tieredEstimate.totalCostWithTier;
+      }
 
       // Determine price validity window (shorter during high volatility)
       const priceValidityDurationMs = this.calculatePriceValidityWindow(
@@ -83,9 +125,94 @@ export class DynamicPricingService {
         alternativePrices,
       };
     } catch (error) {
-      this.logger.error('Failed to estimate gas price', error);
-      throw new Error('Gas price estimation failed');
+      this.logger.error("Failed to estimate gas price", error);
+      throw new Error("Gas price estimation failed");
     }
+  }
+
+  /**
+   * Get tiered gas estimate with full tier analysis
+   */
+  async estimateGasPriceWithTier(
+    chainId: string,
+    gasUnits: number,
+    userUsage: UserUsage,
+    priority: "low" | "normal" | "high" | "critical" = "normal",
+  ): Promise<TieredPriceEstimate> {
+    // First get the base estimate
+    const baseEstimate = await this.estimateGasPrice(
+      chainId,
+      gasUnits,
+      priority,
+    );
+
+    // Then apply tiered pricing
+    return this.tieredPricingService.calculateTieredPrice(
+      baseEstimate,
+      userUsage,
+    );
+  }
+
+  /**
+   * Get multiple price options with tiered pricing
+   */
+  async getMultipleTieredPriceOptions(
+    chainId: string,
+    gasUnits: number,
+    userUsage: UserUsage,
+  ): Promise<{
+    low: TieredPriceEstimate;
+    normal: TieredPriceEstimate;
+    high: TieredPriceEstimate;
+    critical: TieredPriceEstimate;
+  }> {
+    const [low, normal, high, critical] = await Promise.all([
+      this.estimateGasPriceWithTier(chainId, gasUnits, userUsage, "low"),
+      this.estimateGasPriceWithTier(chainId, gasUnits, userUsage, "normal"),
+      this.estimateGasPriceWithTier(chainId, gasUnits, userUsage, "high"),
+      this.estimateGasPriceWithTier(chainId, gasUnits, userUsage, "critical"),
+    ]);
+
+    return { low, normal, high, critical };
+  }
+
+  /**
+   * Validate user access and provide tier recommendations
+   */
+  async validateUserTierAccess(userUsage: UserUsage): Promise<{
+    validation: any;
+    tierComparison: any[];
+    recommendedActions: string[];
+  }> {
+    const validation = this.tieredPricingService.validateTierAccess(userUsage);
+    const tierComparison = this.tieredPricingService.getTierComparison();
+    const recommendedActions: string[] = [];
+
+    // Generate recommended actions based on validation
+    if (validation.suggestedAction === "upgrade") {
+      recommendedActions.push(
+        `Consider upgrading to ${validation.nextAvailableTier} tier for higher limits`,
+      );
+    }
+
+    if (validation.suggestedAction === "downgrade") {
+      recommendedActions.push(
+        "You may be overpaying for your current usage level",
+      );
+    }
+
+    // Check for auto-upgrade eligibility
+    if (this.tieredPricingService.shouldAutoUpgrade(userUsage)) {
+      recommendedActions.push(
+        "You are eligible for automatic tier upgrade based on consistent high usage",
+      );
+    }
+
+    return {
+      validation,
+      tierComparison,
+      recommendedActions,
+    };
   }
 
   /**
@@ -101,10 +228,10 @@ export class DynamicPricingService {
     critical: DynamicGasEstimate;
   }> {
     const [low, normal, high, critical] = await Promise.all([
-      this.estimateGasPrice(chainId, gasUnits, 'low'),
-      this.estimateGasPrice(chainId, gasUnits, 'normal'),
-      this.estimateGasPrice(chainId, gasUnits, 'high'),
-      this.estimateGasPrice(chainId, gasUnits, 'critical'),
+      this.estimateGasPrice(chainId, gasUnits, "low"),
+      this.estimateGasPrice(chainId, gasUnits, "normal"),
+      this.estimateGasPrice(chainId, gasUnits, "high"),
+      this.estimateGasPrice(chainId, gasUnits, "critical"),
     ]);
 
     return { low, normal, high, critical };
@@ -113,20 +240,26 @@ export class DynamicPricingService {
   /**
    * Calculate optimal gas price based on historical patterns
    */
-  async suggestOptimalPrice(chainId: string, gasUnits: number): Promise<{
+  async suggestOptimalPrice(
+    chainId: string,
+    gasUnits: number,
+  ): Promise<{
     recommendedPrice: number;
     reasoning: string;
     expectedConfirmationTime: string;
   }> {
     const snapshot = await this.networkMonitor.getGasPriceSnapshot(chainId);
-    const historical = await this.networkMonitor.getHistoricalMetrics(chainId, 6);
+    const historical = await this.networkMonitor.getHistoricalMetrics(
+      chainId,
+      6,
+    );
 
     // Analyze recent trend
     const recentAverage =
-      historical
-        .slice(-12)
-        .reduce((sum, h) => sum + h.recommendedFeeRate, 0) / 12;
-    const trend = snapshot.recommendedFeeRate > recentAverage ? 'increasing' : 'decreasing';
+      historical.slice(-12).reduce((sum, h) => sum + h.recommendedFeeRate, 0) /
+      12;
+    const trend =
+      snapshot.recommendedFeeRate > recentAverage ? "increasing" : "decreasing";
 
     // Confidence-based recommendation
     const recommendedPrice = this.adjustForConfidence(
@@ -177,9 +310,13 @@ export class DynamicPricingService {
     gasUnits: number,
   ): { low: number; medium: number; high: number } {
     return {
-      low: (snapshot.baseFeePerInstruction * 0.85) * this.defaultStrategy.safetyMargin, // 15% discount
+      low:
+        snapshot.baseFeePerInstruction *
+        0.85 *
+        this.defaultStrategy.safetyMargin, // 15% discount
       medium: snapshot.recommendedFeeRate * this.defaultStrategy.safetyMargin,
-      high: (snapshot.recommendedFeeRate * 1.3) * this.defaultStrategy.safetyMargin, // 30% premium
+      high:
+        snapshot.recommendedFeeRate * 1.3 * this.defaultStrategy.safetyMargin, // 30% premium
     };
   }
 
@@ -196,18 +333,21 @@ export class DynamicPricingService {
   /**
    * Estimate confirmation time based on network conditions
    */
-  private estimateConfirmationTime(networkLoad: number, blockTime: number): string {
+  private estimateConfirmationTime(
+    networkLoad: number,
+    blockTime: number,
+  ): string {
     const estimatedBlocks = Math.ceil(networkLoad / 20); // Rough estimate
     const confirmationMs = estimatedBlocks * blockTime;
 
     if (confirmationMs < 5000) {
-      return '< 5 seconds';
+      return "< 5 seconds";
     } else if (confirmationMs < 30000) {
       return `${Math.ceil(confirmationMs / 1000)}-${Math.ceil(confirmationMs / 1000) + 3} seconds`;
     } else if (confirmationMs < 120000) {
       return `${Math.ceil(confirmationMs / 1000)}-${Math.ceil(confirmationMs / 1000) + 5} seconds`;
     } else {
-      return '> 2 minutes';
+      return "> 2 minutes";
     }
   }
 }
