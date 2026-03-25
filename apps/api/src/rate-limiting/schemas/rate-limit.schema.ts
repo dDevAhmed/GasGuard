@@ -85,6 +85,13 @@ export const DEFAULT_TIER_QUOTAS: Record<TierPlan, QuotaConfig> = {
   },
 };
 
+// Maximum allowed quota values for any API key
+export const MAX_TRANSACTION_LIMITS = {
+  requestsPerMinute: 10000,
+  requestsPerHour: 100000,
+  requestsPerDay: 1000000,
+};
+
 // Window durations in seconds
 export const WINDOW_DURATIONS = {
   minute: 60,

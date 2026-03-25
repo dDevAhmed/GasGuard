@@ -19,7 +19,7 @@ import {
 } from '@nestjs/common';
 import { RateLimitService } from '../services/rate-limit.service';
 import { RedisService } from '../services/redis.service';
-import { QuotaConfig, TierPlan, UsageStats } from '../schemas/rate-limit.schema';
+import { QuotaConfig, TierPlan, UsageStats, MAX_TRANSACTION_LIMITS } from '../schemas/rate-limit.schema';
 
 interface UpdateQuotaDto {
   requestsPerMinute?: number;
@@ -124,11 +124,11 @@ export class RateLimitAdminController {
     const quota: Partial<QuotaConfig> = {};
     
     if (dto.requestsPerMinute !== undefined) {
-      if (dto.requestsPerMinute < 1 || dto.requestsPerMinute > 10000) {
+      if (dto.requestsPerMinute < 1 || dto.requestsPerMinute > MAX_TRANSACTION_LIMITS.requestsPerMinute) {
         throw new HttpException(
           {
             error: 'Invalid Request',
-            message: 'requestsPerMinute must be between 1 and 10000',
+            message: `requestsPerMinute must be between 1 and ${MAX_TRANSACTION_LIMITS.requestsPerMinute}`,
           },
           HttpStatus.BAD_REQUEST,
         );
@@ -137,11 +137,11 @@ export class RateLimitAdminController {
     }
 
     if (dto.requestsPerHour !== undefined) {
-      if (dto.requestsPerHour < 1 || dto.requestsPerHour > 100000) {
+      if (dto.requestsPerHour < 1 || dto.requestsPerHour > MAX_TRANSACTION_LIMITS.requestsPerHour) {
         throw new HttpException(
           {
             error: 'Invalid Request',
-            message: 'requestsPerHour must be between 1 and 100000',
+            message: `requestsPerHour must be between 1 and ${MAX_TRANSACTION_LIMITS.requestsPerHour}`,
           },
           HttpStatus.BAD_REQUEST,
         );
@@ -150,11 +150,11 @@ export class RateLimitAdminController {
     }
 
     if (dto.requestsPerDay !== undefined) {
-      if (dto.requestsPerDay < 1 || dto.requestsPerDay > 1000000) {
+      if (dto.requestsPerDay < 1 || dto.requestsPerDay > MAX_TRANSACTION_LIMITS.requestsPerDay) {
         throw new HttpException(
           {
             error: 'Invalid Request',
-            message: 'requestsPerDay must be between 1 and 1000000',
+            message: `requestsPerDay must be between 1 and ${MAX_TRANSACTION_LIMITS.requestsPerDay}`,
           },
           HttpStatus.BAD_REQUEST,
         );
