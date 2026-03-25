@@ -21,6 +21,6 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*", "src/transection/dto/metrics-query.dto.ts"],
+  "include": ["src/**/*", "src/transection/dto/.dto .ts"],
   "exclude": ["node_modules", "dist"]
 }

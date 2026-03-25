@@ -3,7 +3,7 @@ import { getRepositoryToken } from "@nestjs/typeorm";
 import { BadRequestException } from "@nestjs/common";
 import { TransactionsService } from "./transactions.service";
 import { Transaction, TxStatus, TxType } from "./transaction.entity";
-import { Granularity } from "./dto/metrics-query.dto";
+import { Granularity } from "./dto/.dto ";
 
 function makeTx(overrides: Partial<Transaction> = {}): Transaction {
   return Object.assign(new Transaction(), {
