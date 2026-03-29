@@ -126,4 +126,97 @@ describe('Solidity Reentrancy Guard Analysis', () => {
       expect(reentrancyIssues).toHaveLength(0);
     });
   });
+
+  describe('Fallback Function Security', () => {
+    it('should detect insecure fallback with sensitive external transfer logic', async () => {
+      const insecureFallbackContract = `
+        contract InsecureFallback {
+            address payable public treasury;
+
+            constructor(address payable _treasury) {
+                treasury = _treasury;
+            }
+
+            fallback() external payable {
+                (bool ok,) = treasury.call{value: msg.value}("");
+                require(ok, "Forward failed");
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: insecureFallbackContract,
+      });
+
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          ruleId: 'sol-007',
+          severity: 'high',
+          message: 'Fallback/receive handler is permissive or executes sensitive logic without strict validation',
+        })
+      );
+    });
+
+    it('should detect permissive fallback that accepts unknown calls without explicit rejection', async () => {
+      const permissiveFallbackContract = `
+        contract PermissiveFallback {
+            event UnknownCall(address caller, uint256 value, bytes data);
+
+            fallback() external payable {
+                uint256 x = msg.value;
+                if (x > 0) {
+                    emit UnknownCall(msg.sender, x, msg.data);
+                }
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: permissiveFallbackContract,
+      });
+
+      const fallbackIssues = result.issues.filter(issue => issue.ruleId === 'sol-007');
+      expect(fallbackIssues.length).toBeGreaterThan(0);
+    });
+
+    it('should not flag strict fallback that always rejects unknown calls', async () => {
+      const strictFallbackContract = `
+        contract StrictFallback {
+            fallback() external payable {
+                revert("Unknown function call");
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: strictFallbackContract,
+      });
+
+      const fallbackIssues = result.issues.filter(issue => issue.ruleId === 'sol-007');
+      expect(fallbackIssues).toHaveLength(0);
+    });
+
+    it('should not flag minimal receive handler that only emits telemetry event', async () => {
+      const safeReceiveContract = `
+        contract SafeReceive {
+            event Received(address indexed sender, uint256 amount);
+
+            receive() external payable {
+                emit Received(msg.sender, msg.value);
+            }
+        }
+      `;
+
+      const result = await engine.scan({
+        language: 'solidity',
+        source: safeReceiveContract,
+      });
+
+      const fallbackIssues = result.issues.filter(issue => issue.ruleId === 'sol-007');
+      expect(fallbackIssues).toHaveLength(0);
+    });
+  });
 });

@@ -81,6 +81,16 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
       tags: ['security', 'reentrancy', 'vulnerability'],
       documentationUrl: 'https://docs.gasguard.dev/rules/sol-006',
     },
+    {
+      id: 'sol-007',
+      name: 'Insecure Fallback Function',
+      description: 'Fallback/default handlers should reject unknown calls or enforce strict validation',
+      severity: Severity.HIGH,
+      category: 'security',
+      enabled: true,
+      tags: ['security', 'fallback', 'receive', 'validation'],
+      documentationUrl: 'https://docs.gasguard.dev/rules/sol-007',
+    },
   ];
   
   getName(): string {
@@ -203,6 +213,25 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
             description: 'Add reentrancy guard modifier to prevent reentrancy attacks',
             codeSnippet: 'function withdraw() external nonReentrant { ... }',
             documentationUrl: 'https://docs.gasguard.dev/rules/sol-006',
+          },
+        })));
+      }
+
+      // Rule: sol-007 - Insecure Fallback Function
+      if (this.isRuleEnabled('sol-007', config)) {
+        const insecureFallbacks = this.detectInsecureFallbackFunctions(code);
+        findings.push(...insecureFallbacks.map(location => ({
+          ruleId: 'sol-007',
+          message: 'Fallback/receive handler is permissive or executes sensitive logic without strict validation',
+          severity: this.getRuleSeverity('sol-007', config),
+          location: {
+            file: filePath,
+            ...location,
+          },
+          suggestedFix: {
+            description: 'Keep fallback minimal: reject unknown calls, avoid sensitive logic, and validate accepted ETH transfers',
+            codeSnippet: 'fallback() external payable {\n    revert("Unknown function call");\n}',
+            documentationUrl: 'https://docs.gasguard.dev/rules/sol-007',
           },
         })));
       }
@@ -413,6 +442,135 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
         }
       }
     });
+
+    return findings;
+  }
+
+  private detectInsecureFallbackFunctions(code: string): Array<{ startLine: number; endLine: number }> {
+    const findings: Array<{ startLine: number; endLine: number }> = [];
+    const lines = code.split('\n');
+    const fallbackDeclarationPattern = /^\s*(fallback|receive)\s*\(\s*\)\s*[^;{]*\{/;
+
+    const hasSensitiveOperation = (body: string): boolean => {
+      const sensitivePatterns = [
+        /\bdelegatecall\s*\(/,
+        /\bcallcode\s*\(/,
+        /\bselfdestruct\s*\(/,
+        /\.call\s*\{/,
+        /\.transfer\s*\(/,
+        /\.send\s*\(/,
+      ];
+
+      return sensitivePatterns.some(pattern => pattern.test(body));
+    };
+
+    const hasStateMutation = (bodyLines: string[]): boolean => {
+      const localDeclarationPattern = /^\s*(?:u?int(?:8|16|32|64|128|256)?|address|bool|string|bytes(?:\d+)?|bytes|mapping\s*\(|var|memory|storage)\b/;
+      const stateMutationPattern = /\b[A-Za-z_]\w*(?:\[[^\]]+\])?\s*(?:\+\+|--|\+=|-=|\*=|\/=|%=|=)\s*[^=]/;
+
+      for (const line of bodyLines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+          continue;
+        }
+
+        if (trimmed.startsWith('emit ')) {
+          continue;
+        }
+
+        if (localDeclarationPattern.test(trimmed)) {
+          continue;
+        }
+
+        if (stateMutationPattern.test(trimmed)) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    const hasExplicitReject = (body: string): boolean => {
+      return /\brevert\s*\(/.test(body) || /\brequire\s*\(\s*false\b/.test(body) || /\bassert\s*\(\s*false\b/.test(body);
+    };
+
+    const hasInputValidation = (body: string): boolean => {
+      const validationPatterns = [
+        /\brequire\s*\([^)]*msg\.(sender|value|data)[^)]*\)/,
+        /\bif\s*\([^)]*msg\.(sender|value|data)[^)]*\)\s*\{?\s*revert\s*\(/,
+      ];
+
+      return validationPatterns.some(pattern => pattern.test(body));
+    };
+
+    const isOnlyEventsOrNoop = (bodyLines: string[]): boolean => {
+      const executable = bodyLines
+        .map(line => line.trim())
+        .filter(line => line && line !== '{' && line !== '}' && !line.startsWith('//') && !line.startsWith('/*') && !line.startsWith('*'));
+
+      if (executable.length === 0) {
+        return true;
+      }
+
+      return executable.every(line => line.startsWith('emit ') || line === ';');
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const declarationLine = lines[i];
+      const declarationMatch = declarationLine.match(fallbackDeclarationPattern);
+
+      if (!declarationMatch) {
+        continue;
+      }
+
+      const handlerType = declarationMatch[1];
+      const startLine = i + 1;
+      let braceDepth = 0;
+      const bodyLines: string[] = [];
+      let started = false;
+
+      for (let j = i; j < lines.length; j++) {
+        const currentLine = lines[j];
+        const openBraces = (currentLine.match(/\{/g) || []).length;
+        const closeBraces = (currentLine.match(/\}/g) || []).length;
+
+        if (openBraces > 0) {
+          started = true;
+        }
+
+        if (started) {
+          bodyLines.push(currentLine);
+        }
+
+        braceDepth += openBraces;
+        braceDepth -= closeBraces;
+
+        if (started && braceDepth === 0) {
+          i = j;
+          break;
+        }
+      }
+
+      const body = bodyLines.join('\n');
+      const sensitive = hasSensitiveOperation(body);
+      const mutatesState = hasStateMutation(bodyLines);
+      const explicitReject = hasExplicitReject(body);
+      const validatesInput = hasInputValidation(body);
+      const eventsOnly = isOnlyEventsOrNoop(bodyLines);
+
+      const insecureFallback =
+        handlerType === 'fallback' && !explicitReject && !validatesInput && !eventsOnly;
+
+      const insecureReceive =
+        handlerType === 'receive' && (sensitive || mutatesState) && !validatesInput;
+
+      if (sensitive || mutatesState || insecureFallback || insecureReceive) {
+        findings.push({
+          startLine,
+          endLine: startLine,
+        });
+      }
+    }
 
     return findings;
   }
