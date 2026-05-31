@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use gasguard_rule_engine::{RuleEngine, RuleViolation};
+use gasguard_rule_engine::{RedundantBooleanComparisonsRule, RuleEngine, RuleViolation};
 use gasguard_parser_rust::RustParser;
 use gasguard_parser_solidity::SolidityParser;
 use gasguard_parser_vyper::VyperParser;
@@ -20,8 +20,11 @@ pub struct ContractScanner {
 
 impl ContractScanner {
     pub fn new() -> Self {
-        let rule_engine = RuleEngine::new();
-        // Rules will be added here or via plugins
+        let mut rule_engine = RuleEngine::new();
+
+        // Default built-in rules
+        rule_engine.add_rule(Box::new(RedundantBooleanComparisonsRule::default()));
+
         Self { rule_engine }
     }
 

@@ -1,7 +1,10 @@
 use gasguard_ast::UnifiedAST;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
+
+pub mod rules;
+pub use rules::optimization::style::RedundantBooleanComparisonsRule;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleViolation {
