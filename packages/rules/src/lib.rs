@@ -32,7 +32,8 @@ pub use soroban::{
     SorobanImpl,
     SorobanFunction,
     SorobanField,
-    SorobanParam
+    SorobanParam,
+    InefficientBytesAllocationRule,
 };
 
 // Export Vyper types (keeping glob here is fine if Vyper module is clean, but let's be safe)

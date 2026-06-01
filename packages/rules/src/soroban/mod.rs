@@ -7,10 +7,12 @@
 pub mod parser;
 pub mod analyzer;
 pub mod rule_engine;
+pub mod memory;
 
 pub use parser::*;
 pub use analyzer::*;
 pub use rule_engine::*;
+pub use memory::InefficientBytesAllocationRule;
 
 /// Represents a Soroban contract structure
 #[derive(Debug, Clone, PartialEq)]
