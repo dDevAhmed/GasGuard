@@ -59,6 +59,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.10.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -81,12 +86,6 @@ jobs:
             echo "manager=npm" >> $GITHUB_OUTPUT
             echo "lockfile=" >> $GITHUB_OUTPUT
           fi
-
-      - name: Install pnpm
-        if: steps.package-manager.outputs.manager == 'pnpm'
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10.10.0
 
       - name: Check for package.json files
         id: check-package
@@ -161,6 +160,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.10.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -183,12 +187,6 @@ jobs:
             echo "manager=npm" >> $GITHUB_OUTPUT
             echo "lockfile=" >> $GITHUB_OUTPUT
           fi
-
-      - name: Install pnpm
-        if: steps.package-manager.outputs.manager == 'pnpm'
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10.10.0
 
       - name: Check for package.json files
         id: check-package-build

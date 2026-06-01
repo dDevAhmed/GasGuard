@@ -81,7 +81,6 @@ impl StateVariablePackingRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gasguard_ast::ContractNode;
 
     #[test]
     fn test_state_variable_packing_rule() {

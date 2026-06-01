@@ -121,10 +121,10 @@ pub fn detect_packing_opportunities(variables: Vec<VariableInfo>) -> Vec<Packing
         
         // Try to pack more variables into this slot (32 bytes)
         while total_bytes < 32 && !packable_vars.is_empty() {
-            let next_var = &packable_vars[0];
-            if total_bytes + next_var.size_bytes <= 32 {
+            let next_size = packable_vars[0].size_bytes;
+            if total_bytes + next_size <= 32 {
                 group.push(packable_vars.remove(0));
-                total_bytes += next_var.size_bytes;
+                total_bytes += next_size;
             } else {
                 break;
             }
