@@ -163,6 +163,54 @@ contract TestContract {
     });
   });
 
+  // Helper config to isolate a single rule by disabling all others
+  function isolateRule(ruleId: string): any {
+    const allRuleIds = [
+      'sol-003', 'sol-004', 'sol-005', 'sol-006', 'sol-007',
+      'sol-008', 'sol-009', 'sol-010', 'sol-011', 'sol-012',
+      'sol-018'
+    ];
+    const rules: any = {};
+    for (const id of allRuleIds) {
+      rules[id] = { enabled: id === ruleId };
+    }
+    return { rules };
+  }
+
+  describe('sol-018: Event Parameter Indexing Opportunities', () => {
+    it('should detect non-indexed event parameters', async () => {
+      const code = `
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract EventsContract {
+    event Transfer(address indexed from, address indexed to, uint256 amount);
+    event BalanceUpdated(address user, uint256 newBalance);
+    event Approval(address owner, address spender, uint256 amount);
+}
+`;
+
+      const result = await analyzer.analyze(code, 'test018.sol', isolateRule('sol-018'));
+      RuleAssertions.assertHasFinding(result.findings, 'sol-018');
+      const sol018Findings = result.findings.filter(f => f.ruleId === 'sol-018');
+      expect(sol018Findings.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('should NOT flag fully indexed events', async () => {
+      const code = `
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract GoodEvents {
+    event Transfer(address indexed from, address indexed to, uint256 indexed amount);
+}
+`;
+
+      const result = await analyzer.analyze(code, 'good-events.sol', isolateRule('sol-018'));
+      RuleAssertions.assertNotHasFinding(result.findings, 'sol-018');
+    });
+  });
+
   describe('Batch Testing', () => {
     it('should run multiple fixtures and generate report', async () => {
       const fixtures = FixtureLoader.loadFixturesFromDir(

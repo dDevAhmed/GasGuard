@@ -152,6 +152,16 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
       tags: ['events', 'auditability', 'transparency'],
       documentationUrl: 'https://docs.gasguard.dev/rules/sol-012',
     },
+    {
+      id: 'sol-018',
+      name: 'Event Parameter Indexing Opportunities',
+      description: 'Identifies non-indexed event parameters that could be indexed for better query efficiency',
+      severity: Severity.LOW,
+      category: 'auditability',
+      enabled: true,
+      tags: ['events', 'indexing', 'auditability'],
+      documentationUrl: 'https://docs.gasguard.dev/rules/sol-018',
+    },
   ];
   
   getName(): string {
@@ -395,6 +405,26 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
             description: 'Add event emissions for state changes.',
             codeSnippet: 'event StateChanged(address indexed user, uint256 amount);\n...\nemit StateChanged(msg.sender, value);',
             documentationUrl: 'https://docs.gasguard.dev/rules/sol-012',
+          },
+        })));
+      }
+      
+      // Rule: sol-018 - Event Parameter Indexing Opportunities
+      if (this.isRuleEnabled('sol-018', config)) {
+        const indexingOpportunities = this.detectEventParameterIndexingOpportunities(code);
+        findings.push(...indexingOpportunities.map(location => ({
+          ruleId: 'sol-018',
+          message: location.message,
+          severity: this.getRuleSeverity('sol-018', config),
+          location: {
+            file: filePath,
+            startLine: location.startLine,
+            endLine: location.endLine,
+          },
+          suggestedFix: {
+            description: location.suggestedFix,
+            codeSnippet: location.codeSnippet,
+            documentationUrl: 'https://docs.gasguard.dev/rules/sol-018',
           },
         })));
       }
@@ -1128,6 +1158,64 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
       }
     }
     
+    return findings;
+  }
+
+  /**
+   * Detects event parameter indexing opportunities (sol-018)
+   */
+  private detectEventParameterIndexingOpportunities(code: string): Array<{
+    startLine: number;
+    endLine: number;
+    message: string;
+    suggestedFix: string;
+    codeSnippet?: string;
+  }> {
+    function parseEventParam(paramStr: string): { type: string; name: string; indexed: boolean } {
+      const parts = paramStr.split(/\s+/);
+      const indexed = parts.includes('indexed');
+      const filtered = parts.filter(p => p !== 'indexed');
+      return { type: filtered[0] || '', name: filtered[1] || '', indexed };
+    }
+
+    const findings: Array<{
+      startLine: number; endLine: number; message: string; suggestedFix: string; codeSnippet?: string;
+    }> = [];
+    const lines = code.split('\n');
+    const eventPattern = /^\s*event\s+(\w+)\s*\(([^)]*)\);/;
+    const indexableTypes = ['address', 'uint', 'uint256', 'uint128', 'uint64', 'uint32', 'uint16', 'uint8', 'int', 'int256', 'bytes32'];
+    
+    lines.forEach((line, index) => {
+      const eventMatch = line.match(eventPattern);
+      if (!eventMatch) return;
+      const eventName = eventMatch[1];
+      const paramsStr = eventMatch[2];
+      
+      const params: Array<{ type: string; name: string; indexed: boolean }> = [];
+      let currentParam = '';
+      let parenDepth = 0;
+      for (const ch of paramsStr) {
+        if (ch === '(') { parenDepth++; currentParam += ch; }
+        else if (ch === ')') { parenDepth--; currentParam += ch; }
+        else if (ch === ',' && parenDepth === 0) { params.push(parseEventParam(currentParam.trim())); currentParam = ''; }
+        else { currentParam += ch; }
+      }
+      if (currentParam.trim()) params.push(parseEventParam(currentParam.trim()));
+      
+      for (const param of params) {
+        if (!param.indexed && param.type && indexableTypes.some(t => param.type.startsWith(t))) {
+          const newParams = params.map(p =>
+            p === param ? `indexed ${p.type} ${p.name}`.trim() : `${p.type} ${p.name}`.trim()
+          ).join(', ');
+          findings.push({
+            startLine: index + 1, endLine: index + 1,
+            message: `Event '${eventName}' has non-indexed parameter '${param.name}' (type: ${param.type}). Indexing improves log query efficiency.`,
+            suggestedFix: `Add 'indexed' keyword to '${param.name}'`,
+            codeSnippet: `event ${eventName}(${newParams});`,
+          });
+        }
+      }
+    });
     return findings;
   }
 
