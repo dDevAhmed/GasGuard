@@ -1,6 +1,5 @@
 pub mod storage;
 pub mod deployment;
-pub mod events;
 
 pub use storage::{
     detect_packing_opportunities,
@@ -12,11 +11,3 @@ pub use storage::{
 };
 
 pub use deployment::{estimate_bytecode_size, ExcessiveContractSizeRule};
-
-pub use events::{
-    estimate_event_size,
-    EventInfo,
-    OversizedEvent,
-    OversizedEventsRule,
-    Suggestion,
-};
