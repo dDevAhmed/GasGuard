@@ -20,14 +20,7 @@ pub use optimization::storage::{
     VariableInfo,
 };
 pub use optimization::deployment::{estimate_bytecode_size, ExcessiveContractSizeRule};
-pub use optimization::events::{
-    estimate_event_size,
-    EventInfo,
-    OversizedEvent,
-    OversizedEventsRule,
-    Suggestion,
-};
-pub use security::HardcodedAddressesRule;
+pub use security::{HardcodedAddressesRule, MissingDomainSeparationRule};
 
 // Export Soroban types specifically
 pub use soroban::{
