@@ -41,14 +41,16 @@ impl UpgradeCompatibilityChecker for DefaultUpgradeChecker {
         let old_schemas = SchemaAnalyzer::extract_schemas(old_code);
         let new_schemas = SchemaAnalyzer::extract_schemas(new_code);
 
-        let new_schema_map: std::collections::HashMap<&str, _> =
-            new_schemas.iter().map(|s| (s.struct_name.as_str(), s)).collect();
+        let new_schema_map: std::collections::HashMap<&str, _> = new_schemas
+            .iter()
+            .map(|s| (s.struct_name.as_str(), s))
+            .collect();
 
         let mut all_issues = Vec::new();
 
         for old_schema in old_schemas {
             if let Some(new_schema) = new_schema_map.get(old_schema.struct_name.as_str()) {
-                let issues = SchemaAnalyzer::detect_incompatibilities(old_schema, new_schema);
+                let issues = SchemaAnalyzer::detect_incompatibilities(&old_schema, new_schema);
                 all_issues.extend(issues);
             }
         }
