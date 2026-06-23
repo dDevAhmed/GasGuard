@@ -18,7 +18,7 @@ pub use rule_engine::{
     extract_struct_fields, find_variable_usage, Rule, RuleEngine, RuleViolation, ViolationSeverity,
 };
 pub use security::{HardcodedAddressesRule, MissingDomainSeparationRule, defi::MissingSlippageValidationRule};
-pub use solidity::{StateVariablePackingRule, MappingIterationRule};
+pub use solidity::{StateVariablePackingRule, MappingIterationRule, AbiEncodingRule};
 pub use optimization::storage::detect_mapping_iteration;
 pub use unused_state_variables::UnusedStateVariablesRule;
 
