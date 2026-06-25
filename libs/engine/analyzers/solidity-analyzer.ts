@@ -10,6 +10,7 @@ import {
 } from "../core/analyzer-interface";
 import { detectStorageSlotCollisions } from "../../../rules/security/storage-layout/detect-storage-slot-collisions";
 import { detectMissingImmutable } from "../../../rules/optimization/storage/detect-missing-immutable";
+import { detectMissingCustomErrors } from "../../../rules/optimization/errors/detect-missing-custom-errors";
 
 export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
   private rules: Rule[] = [
@@ -225,6 +226,22 @@ export class SolidityAnalyzer extends BaseAnalyzer implements Analyzer {
         typical: 500,
       },
       documentationUrl: "https://docs.gasguard.dev/rules/sol-017",
+    },
+    {
+      id: "sol-018",
+      name: "Missing Custom Errors",
+      description:
+        "Detects revert strings that could be replaced with custom errors for gas efficiency",
+      severity: Severity.MEDIUM,
+      category: "gas-optimization",
+      enabled: true,
+      tags: ["errors", "revert", "gas", "deployment"],
+      estimatedGasImpact: {
+        min: 50,
+        max: 500,
+        typical: 150,
+      },
+      documentationUrl: "https://docs.gasguard.dev/rules/sol-018",
     },
   ];
 
